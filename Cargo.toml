@@ -1,0 +1,10 @@
+[package]
+name = "rdns"
+version = "1.0.0"
+authors = ["karthik.k <karthik51295@gmail.com>"]
+edition = "2018"
+keywords = ["dns", "rust"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
