@@ -88,6 +88,29 @@ impl DNSHeader {
     }
 
     pub fn write<T: PacketBuffer>(&self, buffer: &mut T) -> Result<()> {
+    	buffer.write_u16(self.id)?;
+
+    	buffer.write(
+    			((self.recursion_desired as u8) << 0)
+    				| ((self.truncated_message as u8) << 1)
+    				| ((self.authoritative_answer as u8) << 2)
+    				| (self.opcode << 3)
+    				| ((self.response as u8) << 7)
+    			)?;
+
+    	buffer.write(
+    			(self.rescode.clone() as u8)
+    				| ((self.checking_disabled as u8) << 4)
+    				| ((self.authed_data as u8) << 5)
+    				| ((self.z as u8) << 6)
+    				| ((self.recursion_available as u8) << 7)
+    			)?;
+
+    	buffer.write_u16(self.questions)?;
+    	buffer.write_u16(self.answers)?;
+    	buffer.write_u16(self.authoritative_entries)?;
+    	buffer.write_u16(self.additional_entries)?;
+
     	Ok(())
     }
 }
@@ -173,6 +196,9 @@ impl DNSQuestion {
 	}
 
 	pub fn write<T: PacketBuffer>(&self, buffer: &mut T) -> Result<()> {
+		buffer.write_qname(&self.name)?;			// Domain name
+		buffer.write_u16(self.q_type.to_num())?;	// QueryType
+		buffer.write_u16(1)?;						// Class
 		Ok(())
 	}
 }
@@ -251,6 +277,30 @@ impl DNSRecord {
 
 	pub fn write<T: PacketBuffer>(&self, buffer: &mut T) -> Result<usize> {
 		let start_pos = buffer.pos();
+
+		match *self {
+			DNSRecord::A {
+				ref domain,
+				ref addr,
+				ttl: TransientTTL(ttl),
+			} => {
+				buffer.write_qname(domain)?;
+				buffer.write_u16(QueryType::A.to_num())?;	// QueryType
+				buffer.write_u16(1)?;						// Class
+				buffer.write_u32(ttl)?;						// TTL
+				buffer.write_u16(4)?;						// DataLength
+
+				let octets = addr.octets();					// IPV4Address
+				buffer.write(octets[0])?;
+				buffer.write(octets[1])?;
+				buffer.write(octets[2])?;
+				buffer.write(octets[3])?;
+			} // A
+			DNSRecord::UNKNOWN {..} => {
+				println!("Skipping Record :: {:?}", self);
+			}
+		}
+
 		Ok(buffer.pos() - start_pos)
 	}
 }
@@ -306,7 +356,26 @@ impl DNSPacket {
 		Ok(dns_packet)
 	}
 
-	pub fn write<T: PacketBuffer>(&mut self, buffer: &mut T, max_size: usize) -> Result<()> {
+	pub fn write<T: PacketBuffer>(&mut self, buffer: &mut T) -> Result<()> {
+		self.header.questions = self.questions.len() as u16;
+		self.header.answers = self.answers.len() as u16;
+		self.header.authoritative_entries = self.authorities.len() as u16;
+		self.header.additional_entries = self.additional.len() as u16;
+
+		self.header.write(buffer)?;
+
+		for question in &self.questions {
+			question.write(buffer)?;
+		}
+		for record in &self.answers {
+			record.write(buffer)?;
+		}
+		for record in &self.authorities {
+			record.write(buffer)?;
+		}
+		for record in &self.additional {
+			record.write(buffer)?;
+		}		
 		Ok(())
 	}
 }

@@ -35,6 +35,16 @@ pub trait PacketBuffer {
 	}
 
 	fn write_qname(&mut self, qname: &str) -> Result<()> {
+		for label in qname.split(".") {
+			let len = label.len();
+			if len > 63 {
+				return Err(Error::new(ErrorKind::InvalidInput, "Single label exceeds 63 chars"));
+			}
+			self.write(len as u8)?;
+			for b in label.as_bytes() {
+				self.write(*b)?;
+			}
+		}
 		Ok(())
 	}
 
