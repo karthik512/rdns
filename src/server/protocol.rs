@@ -121,6 +121,14 @@ impl DNSHeader {
 pub enum QueryType {
 	UNKNOWN(u16),
 	A,		//1
+	NS,		//2
+	CNAME,	//5
+	SOA,	//6
+	MX,		//15
+	TXT,	//16
+	AAAA,	//28
+	SRV,	//33
+	OPT,	//44
 }
 
 impl QueryType {
@@ -129,12 +137,28 @@ impl QueryType {
 		match *self {
 			QueryType::UNKNOWN(x) => x,
 			QueryType::A => 1,
+			QueryType::NS => 2,
+			QueryType::CNAME => 5,
+			QueryType::SOA => 6,
+			QueryType::MX => 15,
+			QueryType::TXT => 16,
+			QueryType::AAAA => 28,
+			QueryType::SRV => 33,
+			QueryType::OPT => 44,
 		}
 	}
 
 	pub fn from_num(num: u16) -> QueryType {
 		match num {
 			1 => QueryType::A,
+			2 => QueryType::NS,
+			5 => QueryType::CNAME,
+			6 => QueryType::SOA,
+			15 => QueryType::MX,
+			16 => QueryType:: TXT,
+			28 => QueryType::AAAA,
+			33 => QueryType::SRV,
+			44 => QueryType::OPT,
 			_ => QueryType::UNKNOWN(num),
 		}
 	}
@@ -243,6 +267,56 @@ pub enum DNSRecord {
 		addr: Ipv4Addr,
 		ttl: TransientTTL,
 	}, // 1
+	NS {
+		domain: String,
+		host: String,
+		ttl: TransientTTL,
+	}, // 2
+	CNAME {
+		domain: String,
+		host: String,
+		ttl: TransientTTL,
+	}, // 5
+	SOA {
+		domain: String,
+		m_name: String,
+		r_name: String,
+		serial: u32,
+		refresh: u32,
+		retry: u32,
+		expire: u32,
+		minimum: u32,
+		ttl: TransientTTL,
+	}, // 6
+	MX {
+		domain: String,
+		priority: u16,
+		host: String,
+		ttl: TransientTTL,
+	}, // 15
+	TXT {
+		domain: String,
+		data: String,
+		ttl: TransientTTL,
+	}, // 16
+	AAAA {
+		domain: String,
+		addr: Ipv6Addr,
+		ttl: TransientTTL,
+	}, // 28
+	SRV {
+		domain: String,
+		priority: u16,
+		weight: u16,
+		port: u16,
+		host: String,
+		ttl: TransientTTL,
+	}, // 33
+	OPT {
+		packet_len: u16,
+		flags: u32,
+		data: String,
+	}, // 41
 }
 
 impl DNSRecord {
@@ -267,6 +341,88 @@ impl DNSRecord {
 								((raw_addr >> 0) & 0xFF) as u8
 							);
 				Ok(DNSRecord::A { domain, addr, ttl })
+			}
+			QueryType::AAAA => {
+				let raw_addr1 = buffer.read_u32()?;
+				let raw_addr2 = buffer.read_u32()?;
+				let raw_addr3 = buffer.read_u32()?;
+				let raw_addr4 = buffer.read_u32()?;
+				let addr = 	Ipv6Addr::new(
+								((raw_addr1 >> 16) & 0xFFFF) as u16,
+								((raw_addr1 >> 0) & 0xFFFF) as u16,
+								((raw_addr2 >> 16) & 0xFFFF) as u16,
+								((raw_addr2 >> 0) & 0xFFFF) as u16,
+								((raw_addr3 >> 16) & 0xFFFF) as u16,
+								((raw_addr3 >> 0) & 0xFFFF) as u16,
+								((raw_addr4 >> 16) & 0xFFFF) as u16,
+								((raw_addr4 >> 0) & 0xFFFF) as u16,								
+							);
+				Ok(DNSRecord::AAAA{ domain, addr, ttl })
+			}
+			QueryType::NS => {
+				let mut host = String::new();
+				buffer.read_qname(&mut host)?;
+				Ok(DNSRecord::NS{ domain, host, ttl })
+			}
+			QueryType::CNAME => {
+				let mut host = String::new();
+				buffer.read_qname(&mut host)?;
+				Ok(DNSRecord::CNAME{ domain, host, ttl })
+			}
+			QueryType::SRV => {
+				let priority = buffer.read_u16()?;
+				let weight = buffer.read_u16()?;
+				let port = buffer.read_u16()?;
+
+				let mut host = String::new();
+				buffer.read_qname(&mut host)?;
+
+				Ok(DNSRecord::SRV{ domain, priority, weight, port, host, ttl })
+			}
+			QueryType::MX => {
+				let priority = buffer.read_u16()?;
+
+				let mut host = String::new();
+				buffer.read_qname(&mut host)?;
+
+				Ok(DNSRecord::MX{ domain, priority, host, ttl })
+			}
+			QueryType::SOA => {
+				let mut m_name = String::new();
+				buffer.read_qname(&mut m_name)?;
+
+				let mut r_name = String::new();
+				buffer.read_qname(&mut r_name)?;
+
+				let serial = buffer.read_u32()?;
+                let refresh = buffer.read_u32()?;
+                let retry = buffer.read_u32()?;
+                let expire = buffer.read_u32()?;
+                let minimum = buffer.read_u32()?;
+
+				Ok(DNSRecord::SOA{ domain, m_name, r_name, serial, refresh, retry, expire, minimum, ttl })
+			}
+			QueryType::TXT => {
+				let mut data = String::new();
+
+				let pos = buffer.pos();
+				data.push_str(&String::from_utf8_lossy(buffer.get_range(pos, data_len as usize)?));
+				buffer.step(data_len as usize)?;
+
+				Ok(DNSRecord::TXT{ domain, data, ttl })
+			}
+			QueryType::OPT => {
+				let mut data = String::new();
+
+				let pos = buffer.pos();
+				data.push_str(&String::from_utf8_lossy(buffer.get_range(pos, data_len as usize)?));
+				buffer.step(data_len as usize)?;
+
+				Ok(DNSRecord::OPT{
+					packet_len: class,
+					flags: ttl_num,
+					data
+				})
 			}
 			QueryType::UNKNOWN(_) => {
 				buffer.step(data_len as usize)?;
@@ -296,12 +452,183 @@ impl DNSRecord {
 				buffer.write(octets[2])?;
 				buffer.write(octets[3])?;
 			} // A
+			DNSRecord::AAAA {
+				ref domain,
+				ref addr,
+				ttl: TransientTTL(ttl),
+			} => {
+				buffer.write_qname(domain)?;
+				buffer.write_u16(QueryType::AAAA.to_num())?;	// QueryType
+				buffer.write_u16(1)?;							// Class
+				buffer.write_u32(ttl)?;							// TTL
+				buffer.write_u32(16)?;							// DataLength
+
+				for octet in &addr.segments() {					// IPV6Address
+					buffer.write_u16(*octet)?;
+				}
+			} // AAAA
+			DNSRecord::NS {
+				ref domain,
+				ref host,
+				ttl: TransientTTL(ttl),
+			} => {
+				buffer.write_qname(domain)?;
+				buffer.write_u16(QueryType::NS.to_num())?;		// QueryType
+				buffer.write_u16(1)?;							// Class
+				buffer.write_u32(ttl)?;							// TTL
+
+				let pos = buffer.pos();
+				buffer.write_u16(0)?;							// Dummy DataLength...Correct DataLength will be set after the data is set...
+
+				buffer.write_qname(host)?;
+
+				let data_len = buffer.pos() - (pos + 2);
+				buffer.set_u16(pos, data_len as u16)?;			// DataLength at the correct pos
+			} // NS
+			DNSRecord::CNAME {
+				ref domain,
+				ref host,
+				ttl: TransientTTL(ttl),
+			} => {
+				buffer.write_qname(domain)?;
+				buffer.write_u16(QueryType::CNAME.to_num())?;	// QueryType
+				buffer.write_u16(1)?;							// Class
+				buffer.write_u32(ttl)?;							// TTL
+
+				let pos = buffer.pos();
+				buffer.write_u16(0)?;							// // Dummy DataLength...Correct DataLength will be set after the data is set...
+
+				buffer.write_qname(host)?;		
+
+				let data_len = buffer.pos() - (pos + 2);
+				buffer.set_u16(pos, data_len as u16)?;			// DataLength at the correct pos
+			} //CNAME
+			DNSRecord::SRV {
+				ref domain,
+				priority,
+				weight,
+				port,
+				ref host,
+				ttl: TransientTTL(ttl),
+			} => {
+				buffer.write_qname(domain)?;
+				buffer.write_u16(QueryType::SRV.to_num())?;	// QueryType
+				buffer.write_u16(1)?;						// Class
+				buffer.write_u32(ttl)?;						// TTL
+
+				let pos = buffer.pos();
+				buffer.write_u16(0)?;						// // Dummy DataLength...Correct DataLength will be set after the data is set...
+
+				buffer.write_u16(priority)?;
+				buffer.write_u16(weight)?;
+				buffer.write_u16(port)?;
+				buffer.write_qname(host)?;
+
+				let data_len = buffer.pos() - (pos + 2);
+				buffer.set_u16(pos, data_len as u16)?;		// DataLength at the correct pos
+			} // SRV
+			DNSRecord::MX {
+				ref domain,
+				priority,
+				ref host,
+				ttl: TransientTTL(ttl),
+			} => {
+				buffer.write_qname(domain)?;
+				buffer.write_u16(QueryType::MX.to_num())?;	// QueryType
+				buffer.write_u16(1)?;						// Class
+				buffer.write_u32(ttl)?;						// TTL
+
+				let pos = buffer.pos();
+				buffer.write_u16(0)?;						// // Dummy DataLength...Correct DataLength will be set after the data is set...
+
+				buffer.write_u16(priority)?;
+				buffer.write_qname(host)?;
+
+				let data_len = buffer.pos() - (pos + 2);
+				buffer.set_u16(pos, data_len as u16)?;		// DataLengh at the correct pos
+			} // MX
+			DNSRecord::SOA {
+				ref domain,
+				ref m_name,
+				ref r_name,
+				serial, 
+				refresh,
+				retry,
+				expire,
+				minimum,
+				ttl: TransientTTL(ttl),
+			} => {
+				buffer.write_qname(domain)?;
+				buffer.write_u16(QueryType::SOA.to_num())?;	// QueryType
+				buffer.write_u16(1)?;						// Class
+				buffer.write_u32(ttl)?;						// TTL
+
+				let pos = buffer.pos();
+				buffer.write_u16(0)?;						// // Dummy DataLength...Correct DataLength will be set after the data is set...
+
+				buffer.write_qname(m_name)?;
+				buffer.write_qname(r_name)?;
+				buffer.write_u32(serial)?;
+				buffer.write_u32(refresh)?;
+				buffer.write_u32(retry)?;
+				buffer.write_u32(expire)?;
+				buffer.write_u32(minimum)?;
+
+				let data_len = buffer.pos() - (pos + 2);
+				buffer.set_u16(pos, data_len as u16)?;		// DataLength at the correct pos
+			} // SOA
+			DNSRecord::TXT {
+				ref domain,
+				ref data,
+				ttl: TransientTTL(ttl),
+			} => {
+				buffer.write_qname(domain)?;
+				buffer.write_u16(QueryType::TXT.to_num())?;	// QueryType
+				buffer.write_u16(1)?;						// Class
+				buffer.write_u32(ttl)?;						// TTL
+				buffer.write_u16(data.len() as u16)?;		// DataLength
+
+				for b in data.as_bytes() {
+					buffer.write(*b)?;
+				}
+			} // TXT	
+			DNSRecord::OPT { .. } => { } // OPT
 			DNSRecord::UNKNOWN {..} => {
 				println!("Skipping Record :: {:?}", self);
-			}
+			} // UNKNOWN
 		}
 
 		Ok(buffer.pos() - start_pos)
+	}
+
+	pub fn get_query_type(&self) -> QueryType {
+		match *self {
+			DNSRecord::A { .. } => QueryType::A,
+			DNSRecord::AAAA { .. } => QueryType::AAAA,
+			DNSRecord::NS { .. } => QueryType::NS,
+			DNSRecord::CNAME { .. } => QueryType::CNAME,
+			DNSRecord::SRV { .. } => QueryType::SRV,
+			DNSRecord::MX { .. } => QueryType::MX,
+			DNSRecord::SOA { .. } => QueryType::SOA,
+			DNSRecord::TXT { .. } => QueryType::TXT,
+			DNSRecord::OPT { .. } => QueryType::OPT,
+			DNSRecord::UNKNOWN { q_type, .. } => QueryType::UNKNOWN(q_type),
+		}
+	}
+
+	pub fn get_domain(&self) -> Option<String> {
+		match *self {
+			DNSRecord::A { ref domain, .. }
+			| DNSRecord::AAAA { ref domain, .. }
+			| DNSRecord::NS { ref domain, .. }
+			| DNSRecord::CNAME { ref domain, .. }
+			| DNSRecord::SRV { ref domain, .. }
+			| DNSRecord::MX { ref domain, .. }
+			| DNSRecord::SOA { ref domain, .. }
+			| DNSRecord::TXT { ref domain, .. }
+			| DNSRecord::UNKNOWN { ref domain, .. } => Some(domain.clone()),
+			DNSRecord::OPT { .. } => None,
+		}
 	}
 }
 // --------------------------------------------------------------------------------------------
